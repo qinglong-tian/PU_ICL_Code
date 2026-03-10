@@ -364,14 +364,15 @@ def get_benchmark_datasets(
     )
 
     banknote_cols = ["variance", "skewness", "curtosis", "entropy", "target"]
-    banknote_path = _download_with_cache(
-        f"{UCI_BASE_URL}/data_banknote_authentication/data_banknote_authentication.txt",
+    banknote_zip_path = _download_with_cache(
+        "https://archive.ics.uci.edu/static/public/267/banknote+authentication.zip",
         subdir="banknote_authentication",
-        filename="data_banknote_authentication.txt",
+        filename="banknote+authentication.zip",
         cache_dir=cache_dir,
         allow_download=allow_uci_download,
     )
-    banknote_df = pd.read_csv(banknote_path, header=None, names=banknote_cols)
+    banknote_df = _read_uci_table_from_zip(banknote_zip_path)
+    banknote_df.columns = banknote_cols
     datasets.append(
         {
             "name": "uci_banknote_authentication_continuous",
