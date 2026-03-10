@@ -88,6 +88,7 @@ Minimal example:
 from pathlib import Path
 
 import torch
+from sklearn.metrics import accuracy_score, confusion_matrix, roc_auc_score
 
 from model import NanoTabPFNPUModel
 
@@ -108,14 +109,36 @@ model = NanoTabPFNPUModel(
 model.load_state_dict(payload["model_state_dict"])
 model.eval()
 
-# Example PU task:
-# - first `train_size` rows are labeled positives
-# - remaining rows are unlabeled rows to score
-train_size = 10
-num_unlabeled = 30
+# Synthetic PU task:
+# - labeled positives are sampled from one Gaussian
+# - unlabeled rows are an explicit mixture of positive and negative Gaussians
+train_size = 64
+num_unlabeled_pos = 128
+num_unlabeled_neg = 128
 num_features = 12
 
-X_task = torch.randn(train_size + num_unlabeled, num_features, device=device)
+positive_mean = torch.full((num_features,), 1.0, device=device)
+negative_mean = torch.full((num_features,), -1.0, device=device)
+
+labeled_pos = torch.randn(train_size, num_features, device=device) + positive_mean
+unlabeled_pos = torch.randn(num_unlabeled_pos, num_features, device=device) + positive_mean
+unlabeled_neg = torch.randn(num_unlabeled_neg, num_features, device=device) + negative_mean
+
+X_unlabeled = torch.cat([unlabeled_pos, unlabeled_neg], dim=0)
+y_true = torch.cat(
+    [
+        torch.zeros(num_unlabeled_pos, dtype=torch.long, device=device),
+        torch.ones(num_unlabeled_neg, dtype=torch.long, device=device),
+    ],
+    dim=0,
+)
+
+# Shuffle so the unlabeled portion is a real mixture of the two Gaussians.
+perm = torch.randperm(X_unlabeled.shape[0], device=device)
+X_unlabeled = X_unlabeled[perm]
+y_true = y_true[perm]
+
+X_task = torch.cat([labeled_pos, X_unlabeled], dim=0)
 y_train = torch.zeros(train_size, device=device)
 
 with torch.no_grad():
@@ -125,16 +148,26 @@ with torch.no_grad():
     ).squeeze(0)
     probs = torch.softmax(logits, dim=-1)
     outlier_prob = probs[:, 1]
+    y_pred = torch.argmax(logits, dim=-1)
 
-print(outlier_prob[:5])
-print(outlier_prob.shape)  # [num_unlabeled]
+accuracy = accuracy_score(y_true.cpu().numpy(), y_pred.cpu().numpy())
+auc = roc_auc_score(y_true.cpu().numpy(), outlier_prob.cpu().numpy())
+cm = confusion_matrix(y_true.cpu().numpy(), y_pred.cpu().numpy())
+
+print(f"num_unlabeled={len(y_true)}")
+print(f"accuracy={accuracy:.4f}")
+print(f"auc={auc:.4f}")
+print(cm)
 ```
 
 Example output:
 
 ```text
-tensor([0.9542, 0.9461, 0.9486, 0.9652, 0.9564])
-torch.Size([30])
+num_unlabeled=256
+accuracy=0.9648
+auc=1.0000
+[[119   9]
+ [  0 128]]
 ```
 
 Input/output conventions:
