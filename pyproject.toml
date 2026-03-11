@@ -16,7 +16,7 @@ dependencies = [
 authors = [
   { name = "Qinglong Tian" },
 ]
-urls = { Repository = "https://github.com/qinglong-tian/PU_ICL_Code" }
+urls = { Repository = "https://github.com/qinglong-tian/puicl" }
 classifiers = [
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
