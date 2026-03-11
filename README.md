@@ -66,11 +66,21 @@ The current default pretraining schedule is two-phase:
 - fixed final-stage data distribution
 - reduced learning rate
 
+Current launcher defaults:
+- batch size: `24`
+- base learning rate: `1.6e-4`
+- minimum learning rate: `1.6e-5`
+- feature-count range: `5..24`
+- positive train-size range: `100..300`
+
 The provided Slurm launcher currently requests:
 - `1` node
 - `2 x H100` GPUs
-- `12` CPU cores
-- `32G` RAM
+- `4` CPU cores
+- `16G` RAM
+- `02:30:00` wall time
+
+Cluster-specific account and email directives are intentionally omitted from the public script. Add your own site-specific `#SBATCH --account=...` or mail settings locally if your cluster requires them.
 
 Example launch:
 
