@@ -205,7 +205,7 @@ python evaluate_pretrained_model.py \
 
 Important evaluator arguments:
 
-- `--checkpoint`: checkpoint to evaluate; defaults to the repository copy at `pretrained_model/latest.pt`
+- `--checkpoint`: checkpoint to evaluate; defaults to the bundled repository checkpoint at `src/puicl/checkpoints/latest.pt`
 - `--device`: `auto`, `cpu`, `cuda`, or `mps`
 - `--cache-dir`: location for cached UCI files
 - `--n-replicates`: number of PU tasks sampled per dataset

@@ -40,7 +40,7 @@ METRIC_COLUMNS = [
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Evaluate pretrained_model/latest.pt using an embedded benchmark protocol: "
+            "Evaluate the bundled pretrained checkpoint using an embedded benchmark protocol: "
             "fixed datasets, fixed PU conversion, and fixed metrics."
         )
     )
@@ -1111,7 +1111,8 @@ def main() -> None:
     repo_root, pretrain_root, package_name = resolve_runtime_paths()
     device = resolve_device(args.device)
 
-    checkpoint_path = args.checkpoint.expanduser() if args.checkpoint is not None else pretrain_root / "pretrained_model" / "latest.pt"
+    default_checkpoint_path = pretrain_root / "src" / "puicl" / "checkpoints" / "latest.pt"
+    checkpoint_path = args.checkpoint.expanduser() if args.checkpoint is not None else default_checkpoint_path
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     if not (0.0 <= args.outlier_rate < 1.0):
