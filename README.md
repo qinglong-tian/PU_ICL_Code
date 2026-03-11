@@ -3,6 +3,7 @@
 Code and experiment artifacts for PU in-context learning on tabular data.
 
 This repository contains:
+- an installable `puicl` Python package for inference with the bundled checkpoint
 - the PU-adapted TabPFN-style model used in the paper
 - synthetic-prior pretraining code and curriculum setup
 - an evaluation pipeline on a fixed set of binary tabular benchmarks
@@ -10,34 +11,56 @@ This repository contains:
 
 ## Repository Layout
 
+- `src/puicl/`: installable inference package and bundled checkpoint
 - `model.py`: main `NanoTabPFNPUModel`
 - `train/`: pretraining config, trainer, schedules, and launch entry points
 - `simplified_prior/`: synthetic data generator and curriculum sampler
 - `data/`: padded-batch generation for PU pretraining
-- `pretrained_model/latest.pt`: pretrained checkpoint
+- `pretrained_model/latest.pt`: repository copy of the pretrained checkpoint
 - `evaluate_pretrained_model.py`: benchmark evaluator for the pretrained checkpoint
 - `evaluation_outputs/`: saved benchmark runs
 - `run_pretrain_two_phase_hpc_v2.sbatch`: two-phase HPC training launcher
 
+## Installation
+
+Install from a local checkout:
+
+```bash
+pip install .
+```
+
+Or install directly from GitHub:
+
+```bash
+pip install git+https://github.com/qinglong-tian/PU_ICL_Code.git
+```
+
+Install the evaluation extras if you also want to run the full benchmark script:
+
+```bash
+pip install .[eval]
+```
+
 ## Quick Start
 
-Evaluate the bundled checkpoint:
+Load the packaged checkpoint and score unlabeled examples:
 
 ```bash
-python evaluate_pretrained_model.py
+python - <<'PY'
+import torch
+
+from puicl import load_pretrained_model
+
+model = load_pretrained_model(device="cpu")
+labeled = torch.randn(8, 12)
+unlabeled = torch.randn(16, 12)
+scores = model.score_unlabeled(labeled, unlabeled)
+print(scores.shape)
+print(scores[:3])
+PY
 ```
 
-The evaluator is standalone and does not depend on any external notebook.
-
-Run the same benchmark with custom PU conversion settings:
-
-```bash
-python evaluate_pretrained_model.py \
-  --max-positive-size 900 \
-  --unlabeled-positive-ratio 2 \
-  --labeled-positive-ratio 1 \
-  --outlier-rate 0.13
-```
+The evaluator remains available as a repository script and is documented below in the evaluation section.
 
 ## Model
 
@@ -90,34 +113,19 @@ sbatch /path/to/PU_ICL_Code/run_pretrain_two_phase_hpc_v2.sbatch
 
 ## Using The Pretrained Model
 
-The bundled checkpoint is stored at `pretrained_model/latest.pt`.
+The package exposes a high-level loader that automatically uses the bundled pretrained checkpoint.
 
 Minimal example:
 
 ```python
-from pathlib import Path
-
 import torch
 from sklearn.metrics import accuracy_score, confusion_matrix, roc_auc_score
 
-from model import NanoTabPFNPUModel
+from puicl import load_pretrained_model
 
 torch.manual_seed(0)
 device = "cpu"  # use "cuda" here if you want GPU inference
-checkpoint_path = Path("pretrained_model/latest.pt")
-
-payload = torch.load(checkpoint_path, map_location=device)
-model_cfg = payload["config"]["model"]
-
-model = NanoTabPFNPUModel(
-    embedding_size=int(model_cfg["embedding_size"]),
-    num_attention_heads=int(model_cfg["num_attention_heads"]),
-    mlp_hidden_size=int(model_cfg["mlp_hidden_size"]),
-    num_layers=int(model_cfg["num_layers"]),
-    num_outputs=int(model_cfg["num_outputs"]),
-).to(device)
-model.load_state_dict(payload["model_state_dict"])
-model.eval()
+model = load_pretrained_model(device=device)
 
 # Synthetic PU task:
 # - labeled positives are sampled from one Gaussian
@@ -148,21 +156,12 @@ perm = torch.randperm(X_unlabeled.shape[0], device=device)
 X_unlabeled = X_unlabeled[perm]
 y_true = y_true[perm]
 
-X_task = torch.cat([labeled_pos, X_unlabeled], dim=0)
-y_train = torch.zeros(train_size, device=device)
+outlier_prob = model.score_unlabeled(labeled_pos, X_unlabeled)
+y_pred = (outlier_prob >= 0.5).to(torch.long)
 
-with torch.no_grad():
-    logits = model(
-        (X_task.unsqueeze(0), y_train.unsqueeze(0)),
-        train_test_split_index=train_size,
-    ).squeeze(0)
-    probs = torch.softmax(logits, dim=-1)
-    outlier_prob = probs[:, 1]
-    y_pred = torch.argmax(logits, dim=-1)
-
-accuracy = accuracy_score(y_true.cpu().numpy(), y_pred.cpu().numpy())
-auc = roc_auc_score(y_true.cpu().numpy(), outlier_prob.cpu().numpy())
-cm = confusion_matrix(y_true.cpu().numpy(), y_pred.cpu().numpy())
+accuracy = accuracy_score(y_true.numpy(), y_pred.numpy())
+auc = roc_auc_score(y_true.numpy(), outlier_prob.numpy())
+cm = confusion_matrix(y_true.numpy(), y_pred.numpy())
 
 print(f"num_unlabeled={len(y_true)}")
 print(f"accuracy={accuracy:.4f}")
@@ -181,9 +180,9 @@ auc=1.0000
 ```
 
 Input/output conventions:
-- `X_task` should be a float tensor of shape `[rows, features]`
-- `y_train` contains labels only for the labeled prefix, with `0` for labeled positives/inliers
-- the model returns logits only for rows after `train_test_split_index`
+- `load_pretrained_model()` loads the packaged checkpoint and returns a `PUICLModel` wrapper
+- `score_unlabeled(labeled_positive_features, unlabeled_features)` returns the outlier probability for each unlabeled row
+- `predict_logits(...)`, `predict_proba(...)`, and `predict_labels(...)` are available when you want direct control over the full PU task tensor
 - class `1` corresponds to the outlier score used in evaluation
 
 ## Evaluation

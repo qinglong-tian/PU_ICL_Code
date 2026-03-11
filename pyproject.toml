@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "puicl"
+version = "0.1.0"
+description = "In-context learning for positive-unlabeled classification and outlier detection."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "torch>=2.0",
+]
+authors = [
+  { name = "Qinglong Tian" },
+]
+urls = { Repository = "https://github.com/qinglong-tian/PU_ICL_Code" }
+
+[project.optional-dependencies]
+eval = [
+  "pandas>=2.0",
+  "scipy>=1.10",
+  "scikit-learn>=1.3",
+  "xlrd>=2.0.1",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+puicl = ["checkpoints/*.pt", "py.typed"]
