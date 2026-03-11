@@ -1,25 +1,15 @@
 # In-Context Learning for Positive-Unlabeled Classification and Outlier Detection
 
-Code and experiment artifacts for PU in-context learning on tabular data.
+This repository contains two things:
 
-This repository contains:
-- an installable `puicl` Python package for inference with the bundled checkpoint
-- the PU-adapted TabPFN-style model used in the paper
-- synthetic-prior pretraining code and curriculum setup
-- an evaluation pipeline on a fixed set of binary tabular benchmarks
-- a pretrained checkpoint and example evaluation outputs
+- an installable Python package, `puicl`, for inference with the bundled pretrained model
+- the research code used for pretraining and benchmark evaluation
 
-## Repository Layout
+The intended end-user path is:
 
-- `src/puicl/`: installable inference package and bundled checkpoint
-- `model.py`: main `NanoTabPFNPUModel`
-- `train/`: pretraining config, trainer, schedules, and launch entry points
-- `simplified_prior/`: synthetic data generator and curriculum sampler
-- `data/`: padded-batch generation for PU pretraining
-- `pretrained_model/latest.pt`: repository copy of the pretrained checkpoint
-- `evaluate_pretrained_model.py`: benchmark evaluator for the pretrained checkpoint
-- `evaluation_outputs/`: saved benchmark runs
-- `run_pretrain_two_phase_hpc_v2.sbatch`: two-phase HPC training launcher
+1. install `puicl`
+2. load the packaged checkpoint with `load_pretrained_model()`
+3. score unlabeled examples given a set of labeled positives
 
 ## Installation
 
@@ -29,13 +19,13 @@ Install from a local checkout:
 pip install .
 ```
 
-Or install directly from GitHub:
+Install directly from GitHub:
 
 ```bash
 pip install git+https://github.com/qinglong-tian/PU_ICL_Code.git
 ```
 
-Install the evaluation extras if you also want to run the full benchmark script:
+If you also want to run the benchmark evaluator in this repository, install the optional evaluation dependencies:
 
 ```bash
 pip install .[eval]
@@ -43,258 +33,189 @@ pip install .[eval]
 
 ## Quick Start
 
-Load the packaged checkpoint and run the full synthetic PU example:
+The example below uses the UCI Banknote Authentication dataset, converts it into a positive-unlabeled task, and scores the unlabeled pool with the packaged pretrained model.
 
 ```bash
 python - <<'PY'
-import torch
-from sklearn.metrics import accuracy_score, confusion_matrix, roc_auc_score
+from io import BytesIO
+from urllib.request import urlopen
+import zipfile
+
+import numpy as np
 
 from puicl import load_pretrained_model
 
-torch.manual_seed(0)
-device = "cpu"  # use "cuda" here if you want GPU inference
-model = load_pretrained_model(device=device)
 
-# Synthetic PU task:
-# - labeled positives are sampled from one Gaussian
-# - unlabeled rows are an explicit mixture of positive and negative Gaussians
-train_size = 64
-num_unlabeled_pos = 128
-num_unlabeled_neg = 128
-num_features = 12
+def load_banknote_dataset() -> tuple[np.ndarray, np.ndarray]:
+    url = "https://archive.ics.uci.edu/static/public/267/banknote+authentication.zip"
+    with urlopen(url) as response:
+        raw = response.read()
+    with zipfile.ZipFile(BytesIO(raw)) as zf:
+        with zf.open("data_banknote_authentication.txt") as f:
+            data = np.loadtxt(f, delimiter=",", dtype=np.float32)
+    x = data[:, :4]
+    y = data[:, 4].astype(np.int64)
+    return x, y
 
-positive_mean = torch.full((num_features,), 1.0, device=device)
-negative_mean = torch.full((num_features,), -1.0, device=device)
 
-labeled_pos = torch.randn(train_size, num_features, device=device) + positive_mean
-unlabeled_pos = torch.randn(num_unlabeled_pos, num_features, device=device) + positive_mean
-unlabeled_neg = torch.randn(num_unlabeled_neg, num_features, device=device) + negative_mean
+def make_pu_task(
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    positive_label: int = 0,
+    labeled_positive_size: int = 64,
+    unlabeled_positive_size: int = 200,
+    unlabeled_outlier_size: int = 200,
+    seed: int = 0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(seed)
 
-X_unlabeled = torch.cat([unlabeled_pos, unlabeled_neg], dim=0)
-y_true = torch.cat(
-    [
-        torch.zeros(num_unlabeled_pos, dtype=torch.long, device=device),
-        torch.ones(num_unlabeled_neg, dtype=torch.long, device=device),
-    ],
-    dim=0,
-)
+    pos_idx = np.where(y == positive_label)[0]
+    neg_idx = np.where(y != positive_label)[0]
+    rng.shuffle(pos_idx)
+    rng.shuffle(neg_idx)
 
-perm = torch.randperm(X_unlabeled.shape[0], device=device)
-X_unlabeled = X_unlabeled[perm]
-y_true = y_true[perm]
+    labeled_idx = pos_idx[:labeled_positive_size]
+    unlabeled_pos_idx = pos_idx[
+        labeled_positive_size : labeled_positive_size + unlabeled_positive_size
+    ]
+    unlabeled_neg_idx = neg_idx[:unlabeled_outlier_size]
 
-outlier_prob = model.score_unlabeled(labeled_pos, X_unlabeled)
-y_pred = (outlier_prob >= 0.5).to(torch.long)
+    x_labeled = x[labeled_idx]
+    x_unlabeled = np.concatenate([x[unlabeled_pos_idx], x[unlabeled_neg_idx]], axis=0)
+    y_unlabeled_true = np.concatenate(
+        [
+            np.zeros(len(unlabeled_pos_idx), dtype=np.int64),
+            np.ones(len(unlabeled_neg_idx), dtype=np.int64),
+        ],
+        axis=0,
+    )
 
-accuracy = accuracy_score(y_true.numpy(), y_pred.numpy())
-auc = roc_auc_score(y_true.numpy(), outlier_prob.numpy())
-cm = confusion_matrix(y_true.numpy(), y_pred.numpy())
+    perm = rng.permutation(len(y_unlabeled_true))
+    x_unlabeled = x_unlabeled[perm]
+    y_unlabeled_true = y_unlabeled_true[perm]
+    return x_labeled, x_unlabeled, y_unlabeled_true
 
-print(f"num_unlabeled={len(y_true)}")
-print(f"accuracy={accuracy:.4f}")
-print(f"auc={auc:.4f}")
-print(cm)
+
+x, y = load_banknote_dataset()
+x_labeled, x_unlabeled, y_unlabeled_true = make_pu_task(x, y)
+
+model = load_pretrained_model(device="cpu")
+outlier_prob = model.score_unlabeled(x_labeled, x_unlabeled).numpy()
+y_pred = (outlier_prob >= 0.5).astype(np.int64)
+
+tn = int(np.sum((y_unlabeled_true == 0) & (y_pred == 0)))
+fp = int(np.sum((y_unlabeled_true == 0) & (y_pred == 1)))
+fn = int(np.sum((y_unlabeled_true == 1) & (y_pred == 0)))
+tp = int(np.sum((y_unlabeled_true == 1) & (y_pred == 1)))
+accuracy = float(np.mean(y_pred == y_unlabeled_true))
+
+print(f"labeled positives: {x_labeled.shape[0]}")
+print(f"unlabeled rows: {x_unlabeled.shape[0]}")
+print(f"accuracy: {accuracy:.4f}")
+print("confusion matrix:")
+print(np.array([[tn, fp], [fn, tp]]))
+print("first 10 outlier probabilities:")
+print(np.round(outlier_prob[:10], 4))
 PY
 ```
 
-The evaluator remains available as a repository script and is documented below in the evaluation section.
+The key inference convention is:
 
-## Model
+- the model sees a prefix of labeled positive rows
+- every row after that prefix is treated as unlabeled and receives an outlier probability
+- output class `1` is the outlier score used by the benchmark code
 
-The main predictive model is a PU-adapted TabPFN-style transformer:
-- scalar feature encoder with train-prefix normalization
-- PU target encoder with a learned unlabeled token
-- transformer blocks with feature-wise and row-wise attention
-- 2-class decoder for inlier vs outlier prediction on unlabeled rows
+## Public API
 
-Current default architecture:
-- embedding size: `128`
-- attention heads: `8`
-- transformer layers: `6`
-- MLP hidden size: `256`
+The installable package is under [src/puicl](/Users/qltian/Library/CloudStorage/GoogleDrive-qltian2021@gmail.com/Other%20computers/My%20Laptop/Documents/Research/ai/PU_ICL_Code/src/puicl).
 
-## Training
+Main entry points:
 
-The current default pretraining schedule is two-phase:
+- `from puicl import load_pretrained_model`
+- `from puicl import PUICLModel`
+- `from puicl import NanoTabPFNPUModel`
 
-1. Curriculum phase:
-- `100` stages
-- `1000` steps per stage
+The `PUICLModel` wrapper provides:
 
-2. Final-stage tail:
-- additional `25000` steps
-- fixed final-stage data distribution
-- reduced learning rate
+- `score_unlabeled(labeled_positive_features, unlabeled_features)`
+- `predict_logits(x_task, train_test_split_index=..., y_train=...)`
+- `predict_proba(x_task, train_test_split_index=..., y_train=...)`
+- `predict_labels(x_task, train_test_split_index=..., y_train=...)`
 
-Current launcher defaults:
-- batch size: `24`
-- base learning rate: `1.6e-4`
-- minimum learning rate: `1.6e-5`
-- feature-count range: `5..24`
-- positive train-size range: `100..300`
-
-The provided Slurm launcher currently requests:
-- `1` node
-- `2 x H100` GPUs
-- `4` CPU cores
-- `16G` RAM
-- `02:30:00` wall time
-
-Cluster-specific account and email directives are intentionally omitted from the public script. Add your own site-specific `#SBATCH --account=...` or mail settings locally if your cluster requires them.
-
-Example launch:
-
-```bash
-sbatch /path/to/PU_ICL_Code/run_pretrain_two_phase_hpc_v2.sbatch
-```
-
-## Using The Pretrained Model
-
-The package exposes a high-level loader that automatically uses the bundled pretrained checkpoint.
-
-Minimal example:
+You can also override the bundled checkpoint:
 
 ```python
-import torch
-from sklearn.metrics import accuracy_score, confusion_matrix, roc_auc_score
-
 from puicl import load_pretrained_model
 
-torch.manual_seed(0)
-device = "cpu"  # use "cuda" here if you want GPU inference
-model = load_pretrained_model(device=device)
-
-# Synthetic PU task:
-# - labeled positives are sampled from one Gaussian
-# - unlabeled rows are an explicit mixture of positive and negative Gaussians
-train_size = 64
-num_unlabeled_pos = 128
-num_unlabeled_neg = 128
-num_features = 12
-
-positive_mean = torch.full((num_features,), 1.0, device=device)
-negative_mean = torch.full((num_features,), -1.0, device=device)
-
-labeled_pos = torch.randn(train_size, num_features, device=device) + positive_mean
-unlabeled_pos = torch.randn(num_unlabeled_pos, num_features, device=device) + positive_mean
-unlabeled_neg = torch.randn(num_unlabeled_neg, num_features, device=device) + negative_mean
-
-X_unlabeled = torch.cat([unlabeled_pos, unlabeled_neg], dim=0)
-y_true = torch.cat(
-    [
-        torch.zeros(num_unlabeled_pos, dtype=torch.long, device=device),
-        torch.ones(num_unlabeled_neg, dtype=torch.long, device=device),
-    ],
-    dim=0,
-)
-
-# Shuffle so the unlabeled portion is a real mixture of the two Gaussians.
-perm = torch.randperm(X_unlabeled.shape[0], device=device)
-X_unlabeled = X_unlabeled[perm]
-y_true = y_true[perm]
-
-outlier_prob = model.score_unlabeled(labeled_pos, X_unlabeled)
-y_pred = (outlier_prob >= 0.5).to(torch.long)
-
-accuracy = accuracy_score(y_true.numpy(), y_pred.numpy())
-auc = roc_auc_score(y_true.numpy(), outlier_prob.numpy())
-cm = confusion_matrix(y_true.numpy(), y_pred.numpy())
-
-print(f"num_unlabeled={len(y_true)}")
-print(f"accuracy={accuracy:.4f}")
-print(f"auc={auc:.4f}")
-print(cm)
+model = load_pretrained_model(checkpoint="/path/to/latest.pt", device="cuda")
 ```
 
-Example output:
+## Package Contents
 
-```text
-num_unlabeled=256
-accuracy=0.9648
-auc=1.0000
-[[119   9]
- [  0 128]]
-```
+The packaged checkpoint is bundled as package data:
 
-Input/output conventions:
-- `load_pretrained_model()` loads the packaged checkpoint and returns a `PUICLModel` wrapper
-- `score_unlabeled(labeled_positive_features, unlabeled_features)` returns the outlier probability for each unlabeled row
-- `predict_logits(...)`, `predict_proba(...)`, and `predict_labels(...)` are available when you want direct control over the full PU task tensor
-- class `1` corresponds to the outlier score used in evaluation
+- [src/puicl/checkpoints/latest.pt](/Users/qltian/Library/CloudStorage/GoogleDrive-qltian2021@gmail.com/Other%20computers/My%20Laptop/Documents/Research/ai/PU_ICL_Code/src/puicl/checkpoints/latest.pt)
+
+The core model implementation used by the package is:
+
+- [src/puicl/model.py](/Users/qltian/Library/CloudStorage/GoogleDrive-qltian2021@gmail.com/Other%20computers/My%20Laptop/Documents/Research/ai/PU_ICL_Code/src/puicl/model.py)
+
+The high-level inference wrapper is:
+
+- [src/puicl/inference.py](/Users/qltian/Library/CloudStorage/GoogleDrive-qltian2021@gmail.com/Other%20computers/My%20Laptop/Documents/Research/ai/PU_ICL_Code/src/puicl/inference.py)
+
+## Research Code
+
+The repository also includes the research pipeline used to produce and evaluate the checkpoint:
+
+- [train/](/Users/qltian/Library/CloudStorage/GoogleDrive-qltian2021@gmail.com/Other%20computers/My%20Laptop/Documents/Research/ai/PU_ICL_Code/train): pretraining configuration, trainer, and launchers
+- [simplified_prior/](/Users/qltian/Library/CloudStorage/GoogleDrive-qltian2021@gmail.com/Other%20computers/My%20Laptop/Documents/Research/ai/PU_ICL_Code/simplified_prior): synthetic prior and curriculum logic
+- [data/](/Users/qltian/Library/CloudStorage/GoogleDrive-qltian2021@gmail.com/Other%20computers/My%20Laptop/Documents/Research/ai/PU_ICL_Code/data): padded-batch generation
+- [evaluate_pretrained_model.py](/Users/qltian/Library/CloudStorage/GoogleDrive-qltian2021@gmail.com/Other%20computers/My%20Laptop/Documents/Research/ai/PU_ICL_Code/evaluate_pretrained_model.py): standalone benchmark evaluator
+- [run_pretrain_two_phase_hpc_v2.sbatch](/Users/qltian/Library/CloudStorage/GoogleDrive-qltian2021@gmail.com/Other%20computers/My%20Laptop/Documents/Research/ai/PU_ICL_Code/run_pretrain_two_phase_hpc_v2.sbatch): Slurm launcher template
+
+Current default training configuration:
+
+- model: 6-layer transformer, embedding size `128`, 8 attention heads, MLP hidden size `256`
+- curriculum: `100` stages with `1000` steps per stage
+- tail phase: additional `25000` steps on the final-stage distribution
+- optimization defaults: batch size `24`, base LR `1.6e-4`, minimum LR `1.6e-5`
+- synthetic task ranges: `5..24` features and `100..300` labeled positives
+
+The public Slurm script omits site-specific account and email directives on purpose. Add those locally if your cluster requires them.
 
 ## Evaluation
 
-The evaluator is standalone and embeds the benchmark protocol directly:
-- same benchmark datasets
-- same feature preprocessing
-- same conversion from binary classification datasets to PU tasks
-- same evaluation metrics
+The benchmark evaluator is a repository script, not a packaged CLI. It uses:
 
-The evaluator runs the checkpoint in `pretrained_model/latest.pt` by default.
+- a fixed set of binary tabular benchmark datasets
+- a fixed PU conversion protocol
+- fixed metrics including accuracy, balanced accuracy, ROC AUC, average precision, and FPR-at-TPR targets
 
-Important arguments:
-- `--checkpoint`: path to the checkpoint to evaluate. Defaults to `pretrained_model/latest.pt`.
-- `--output-dir`: directory where evaluation runs are saved. Each run creates `eval_<timestamp>/`.
-- `--cache-dir`: directory for cached UCI downloads and parsed files. Defaults to `.cache/` inside the repo.
-- `--device`: execution device. Use `auto`, `cpu`, `cuda`, or `mps`.
-- `--allow-uci-download` / `--no-uci-download`: enable or disable downloading benchmark datasets that are not already cached.
-- `--n-replicates`: number of independent PU tasks sampled per dataset.
-- `--max-attempts-per-dataset`: maximum number of tries used to obtain valid PU tasks for a dataset. This matters when a dataset cannot always satisfy the requested PU constraints.
-- `--global-seed`: random seed controlling dataset-level reproducibility.
-- `--max-categorical-classes`: cap used when encoding categorical features after preprocessing.
-
-PU-conversion arguments:
-- `--max-positive-size`: maximum number of examples from the chosen positive class to use when constructing one PU task.
-- `--unlabeled-positive-ratio` and `--labeled-positive-ratio`: define the split of selected positives between the unlabeled pool and the labeled prefix. For example, `2` and `1` means two-thirds of the selected positives go to the unlabeled pool and one-third remain labeled.
-- `--outlier-rate`: target fraction of negatives inside the unlabeled pool. For example, `0.13` means the unlabeled set is built to contain about `13%` outliers and `87%` unlabeled positives.
-
-What one replicate means:
-- choose one of the two original class labels as the positive class
-- sample up to `max_positive_size` positives from that class
-- split those positives into labeled and unlabeled parts using the requested ratio
-- add negatives into the unlabeled pool to match `outlier_rate`
-- evaluate the model on that resulting PU task
-
-Example with all major controls shown:
+Example:
 
 ```bash
 python evaluate_pretrained_model.py \
-  --checkpoint pretrained_model/latest.pt \
-  --device auto \
-  --n-replicates 10 \
-  --max-positive-size 900 \
+  --max-positive-size 600 \
   --unlabeled-positive-ratio 2 \
   --labeled-positive-ratio 1 \
-  --outlier-rate 0.13 \
-  --global-seed 42
+  --outlier-rate 0.2
 ```
 
-Evaluation outputs are written to:
+Important evaluator arguments:
 
-```text
-evaluation_outputs/eval_<timestamp>/
-```
+- `--checkpoint`: checkpoint to evaluate; defaults to the repository copy at `pretrained_model/latest.pt`
+- `--device`: `auto`, `cpu`, `cuda`, or `mps`
+- `--cache-dir`: location for cached UCI files
+- `--n-replicates`: number of PU tasks sampled per dataset
+- `--max-positive-size`: maximum number of positives used to construct one PU task
+- `--unlabeled-positive-ratio` and `--labeled-positive-ratio`: split between unlabeled positives and labeled positives
+- `--outlier-rate`: target fraction of negatives inside the unlabeled pool
 
-and include:
-- summary metrics
-- per-replicate metrics
-- dataset feature profiles
-- realized PU composition summaries
-- per-dataset feature metadata
-
-## Dependencies
-
-The code expects a Python environment with at least:
-- `torch`
-- `numpy`
-- `pandas`
-- `scipy`
-- `scikit-learn`
-- `xlrd`
-
-Some evaluation datasets are downloaded from the UCI repository on first use and cached under `.cache/`.
+Evaluation outputs are written to `evaluation_outputs/eval_<timestamp>/`.
 
 ## Notes
 
-- Existing evaluation outputs in `evaluation_outputs/` are included as example benchmark runs with different PU settings.
+- The installable `puicl` package is focused on inference with the bundled checkpoint.
+- Training and full benchmark evaluation remain repository workflows rather than stable package APIs.
