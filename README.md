@@ -1,8 +1,6 @@
 # In-Context Learning for Positive-Unlabeled Classification and Outlier Detection
 
 [![test](https://github.com/qinglong-tian/PU_ICL_Code/actions/workflows/tests.yml/badge.svg)](https://github.com/qinglong-tian/PU_ICL_Code/actions/workflows/tests.yml)
-[![pypi package](https://img.shields.io/pypi/v/puicl)](https://pypi.org/project/puicl/)
-[![downloads](https://static.pepy.tech/badge/puicl/month)](https://pepy.tech/project/puicl)
 
 This repository contains two things:
 
