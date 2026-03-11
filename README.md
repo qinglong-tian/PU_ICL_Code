@@ -207,6 +207,39 @@ python evaluate_pretrained_model.py \
   --outlier-rate 0.2
 ```
 
+Latest run in this repository (March 11, 2026; bundled `latest.pt`; `device=mps`; `global_seed=42`; `n_replicates=10`) used the example command above and wrote outputs to `evaluation_outputs/eval_20260311_132907/`.
+
+Macro-average metrics across the 13 benchmark datasets from that run:
+
+| Metric | Value |
+| --- | ---: |
+| Accuracy | 0.8553 |
+| Balanced accuracy | 0.7866 |
+| ROC AUC | 0.8744 |
+| Average precision | 0.7332 |
+| FPR@TPR=0.80 | 0.2118 |
+| FPR@TPR=0.90 | 0.3287 |
+| FPR@TPR=0.95 | 0.4336 |
+| Outlier score gap | 1.9165 |
+
+Per-dataset summary from `summary_metrics_latest.csv`:
+
+| Dataset | Accuracy | Balanced accuracy | ROC AUC | Average precision |
+| --- | ---: | ---: | ---: | ---: |
+| Abalone | 0.8508 | 0.7732 | 0.8648 | 0.6952 |
+| Adult | 0.8342 | 0.6549 | 0.7918 | 0.5836 |
+| Banknote authentication | 0.9844 | 0.9902 | 0.9992 | 0.9968 |
+| Car evaluation | 0.6226 | 0.6983 | 0.8859 | 0.6983 |
+| Default credit card clients | 0.7646 | 0.5739 | 0.6235 | 0.3255 |
+| Iranian churn | 0.8930 | 0.7986 | 0.9107 | 0.8073 |
+| Letter recognition (C vs U) | 0.9724 | 0.9636 | 0.9946 | 0.9816 |
+| MAGIC gamma | 0.8288 | 0.6759 | 0.8052 | 0.5981 |
+| Mushroom | 0.9476 | 0.9309 | 0.9765 | 0.9523 |
+| Rice Cammeo/Osmancik | 0.9346 | 0.8778 | 0.9691 | 0.9113 |
+| Spambase | 0.7668 | 0.7909 | 0.8756 | 0.6754 |
+| WDBC | 0.9291 | 0.8978 | 0.9598 | 0.8862 |
+| Wine quality (cutoff 6) | 0.7894 | 0.6003 | 0.7108 | 0.4205 |
+
 Important evaluator arguments:
 
 - `--checkpoint`: checkpoint to evaluate; defaults to the bundled repository checkpoint at `src/puicl/checkpoints/latest.pt`

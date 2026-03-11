@@ -1,0 +1,18 @@
+{
+  "checkpoint_path": "puicl/src/puicl/checkpoints/latest.pt",
+  "device": "mps",
+  "allow_uci_download": true,
+  "n_replicates": 10,
+  "max_attempts_per_dataset": 200,
+  "max_positive_size": 600,
+  "unlabeled_labeled_positive_ratio": [
+    2,
+    1
+  ],
+  "outlier_rate": 0.2,
+  "max_categorical_classes": 64,
+  "global_seed": 42,
+  "cache_dir": "puicl/.cache",
+  "load_missing_keys": [],
+  "load_unexpected_keys": []
+}
